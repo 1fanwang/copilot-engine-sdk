@@ -212,6 +212,44 @@ test("a list response missing the servers array reports invalid-response", async
     }
 });
 
+test("a null list response body reports invalid-response", async () => {
+    const proxy = await startProxy({
+        health: (res) => {
+            res.writeHead(200);
+            res.end();
+        },
+        list: (res) => {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end("null");
+        },
+    });
+    try {
+        const outcome = await discoverMCPServersDetailed(proxy.url);
+        assert.equal(outcome.status, "invalid-response");
+    } finally {
+        await proxy.close();
+    }
+});
+
+test("a server entry missing its string fields reports invalid-response", async () => {
+    const proxy = await startProxy({
+        health: (res) => {
+            res.writeHead(200);
+            res.end();
+        },
+        list: (res) => {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ servers: [{}] }));
+        },
+    });
+    try {
+        const outcome = await discoverMCPServersDetailed(proxy.url);
+        assert.equal(outcome.status, "invalid-response");
+    } finally {
+        await proxy.close();
+    }
+});
+
 test("the overall deadline is a single shared budget, not the sum of two request timeouts", async () => {
     // Health answers after most of the budget has already elapsed, then list
     // never answers. Under one shared budget the whole call ends at about

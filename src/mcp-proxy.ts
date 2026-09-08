@@ -73,6 +73,14 @@ function combineSignals(signals: Array<AbortSignal | undefined>): { signal: Abor
     return { signal: controller.signal, dispose };
 }
 
+function isMCPServerEntry(value: unknown): value is MCPServerEntry {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+    const entry = value as Record<string, unknown>;
+    return typeof entry.name === "string" && typeof entry.proxyEndpoint === "string";
+}
+
 function buildServerMap(proxyUrl: string, entries: MCPServerEntry[]): Record<string, DiscoveredMCPServer> {
     const servers: Record<string, DiscoveredMCPServer> = {};
     for (const server of entries) {
@@ -153,9 +161,9 @@ export async function discoverMCPServersDetailed(proxyUrl: string, options: MCPD
             return { status: "invalid-response", reason: `server-list request failed with status ${response.status}` };
         }
 
-        let data: { servers?: unknown };
+        let data: unknown;
         try {
-            data = (await response.json()) as { servers?: unknown };
+            data = await response.json();
         } catch {
             if (sharedSignal.aborted) {
                 return classifyAbort();
@@ -163,11 +171,23 @@ export async function discoverMCPServersDetailed(proxyUrl: string, options: MCPD
             return { status: "invalid-response", reason: "server-list response body was not valid JSON" };
         }
 
-        if (!Array.isArray(data.servers)) {
+        if (typeof data !== "object" || data === null) {
+            return { status: "invalid-response", reason: "server-list response body was not a JSON object" };
+        }
+
+        const servers = (data as { servers?: unknown }).servers;
+        if (!Array.isArray(servers)) {
             return { status: "invalid-response", reason: "server-list response body did not include a servers array" };
         }
 
-        return { status: "ok", servers: buildServerMap(proxyUrl, data.servers as MCPServerEntry[]) };
+        if (!servers.every(isMCPServerEntry)) {
+            return {
+                status: "invalid-response",
+                reason: "server-list response body had an entry without a name and proxyEndpoint string",
+            };
+        }
+
+        return { status: "ok", servers: buildServerMap(proxyUrl, servers) };
     } finally {
         clearTimeout(timer);
         sharedSignals.dispose();

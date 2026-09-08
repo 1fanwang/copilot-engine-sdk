@@ -126,15 +126,17 @@ test("cancelling during health discovery reports cancelled", async () => {
 });
 
 test("cancelling during list discovery reports cancelled", async () => {
+    const controller = new AbortController();
     const proxy = await startProxy({
         health: (res) => {
             res.writeHead(200);
             res.end();
         },
-        // list never responds
+        // Abort once the list request has actually arrived, so the cancelled
+        // phase is deterministic rather than racing a timer against health.
+        // The response is never sent.
+        list: () => controller.abort(),
     });
-    const controller = new AbortController();
-    setTimeout(() => controller.abort(), 20);
     try {
         const outcome = await discoverMCPServersDetailed(proxy.url, { signal: controller.signal, timeoutMs: 5000 });
         assert.deepEqual(outcome, { status: "cancelled" });
@@ -211,25 +213,38 @@ test("a list response missing the servers array reports invalid-response", async
 });
 
 test("the overall deadline is a single shared budget, not the sum of two request timeouts", async () => {
-    // Health responds after a short delay; list then never responds. The
-    // pre-fix implementation gave health its own 5000ms and list its own
-    // 10000ms, additively. Here the whole call must finish close to the
-    // 150ms overall budget instead.
+    // Health answers after most of the budget has already elapsed, then list
+    // never answers. Under one shared budget the whole call ends at about
+    // BUDGET_MS. If health and list each owned BUDGET_MS the call would
+    // instead run to about HEALTH_DELAY_MS + BUDGET_MS, so the upper bound
+    // below sits between the two and separates them.
+    const HEALTH_DELAY_MS = 600;
+    const BUDGET_MS = 700;
+    const ADDITIVE_MS = HEALTH_DELAY_MS + BUDGET_MS;
+    const UPPER_BOUND_MS = 1000;
+
     const proxy = await startProxy({
         health: (res) => {
             setTimeout(() => {
                 res.writeHead(200);
                 res.end();
-            }, 60);
+            }, HEALTH_DELAY_MS);
         },
         // list never responds
     });
     try {
         const start = Date.now();
-        const outcome = await discoverMCPServersDetailed(proxy.url, { timeoutMs: 150 });
+        const outcome = await discoverMCPServersDetailed(proxy.url, { timeoutMs: BUDGET_MS });
         const elapsed = Date.now() - start;
         assert.deepEqual(outcome, { status: "timed-out" });
-        assert.ok(elapsed < 1000, `expected the shared 150ms budget to bound the call, got ${elapsed}ms`);
+        assert.ok(
+            elapsed >= HEALTH_DELAY_MS,
+            `expected the call to outlast the health response, got ${elapsed}ms`
+        );
+        assert.ok(
+            elapsed < UPPER_BOUND_MS,
+            `expected one shared ${BUDGET_MS}ms budget, not an additive ${ADDITIVE_MS}ms, got ${elapsed}ms`
+        );
     } finally {
         await proxy.close();
     }

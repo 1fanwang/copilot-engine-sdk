@@ -157,6 +157,9 @@ export async function discoverMCPServersDetailed(proxyUrl: string, options: MCPD
         try {
             data = (await response.json()) as { servers?: unknown };
         } catch {
+            if (sharedSignal.aborted) {
+                return classifyAbort();
+            }
             return { status: "invalid-response", reason: "server-list response body was not valid JSON" };
         }
 

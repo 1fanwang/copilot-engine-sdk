@@ -189,7 +189,7 @@ import { discoverMCPServers } from "@github/copilot-engine-sdk";
 const servers = await discoverMCPServers(proxyUrl);
 ```
 
-For callers that need to cancel discovery (for example, when the session that
+For callers that need to cancel discovery (for example, when the job that
 requested it is abandoned) or tell those outcomes apart, use
 `discoverMCPServersDetailed`. Its health check and server-list request share
 one overall time budget instead of each owning its own timeout, so the total
@@ -198,9 +198,9 @@ wait is bounded rather than additive:
 ```typescript
 import { discoverMCPServersDetailed } from "@github/copilot-engine-sdk";
 
+// Use the abort signal of whatever owns this work, such as the incoming
+// request or the job being processed.
 const controller = new AbortController();
-// Cancel discovery if the session starting it is abandoned.
-session.onAbandoned(() => controller.abort());
 
 const outcome = await discoverMCPServersDetailed(proxyUrl, {
   signal: controller.signal,

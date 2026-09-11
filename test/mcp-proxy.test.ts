@@ -50,7 +50,7 @@ for (const [method, phase, status] of [
     ["discovery", "health", 503],
     ["discovery", "list", 503],
 ] as const) {
-    test(`${method} closes the unread ${phase} HTTP ${status} body`, async () => {
+    test(`${method} closes the unread ${phase} HTTP ${status} body`, async (t) => {
         let socket: Socket | undefined;
         const stall = (res: http.ServerResponse): void => {
             socket = res.socket ?? undefined;
@@ -72,6 +72,7 @@ for (const [method, phase, status] of [
             if (!socket.destroyed) {
                 await once(socket, "close", { signal: AbortSignal.timeout(1000) });
             }
+            t.diagnostic(JSON.stringify({ method, phase, status, connection_closed: socket.destroyed }));
             assert.equal(socket.destroyed, true);
         } finally {
             await proxy.close();

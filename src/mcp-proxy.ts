@@ -100,6 +100,7 @@ export async function isMCPProxyAvailable(proxyUrl: string, options: MCPProxyAva
     const signal = options.signal ?? AbortSignal.timeout(5000);
     try {
         const response = await fetch(`${proxyUrl}/health`, { signal });
+        await response.body?.cancel();
         return response.ok;
     } catch {
         return false;
@@ -190,6 +191,7 @@ export async function discoverMCPServersDetailed(proxyUrl: string, options: MCPD
         return { status: "ok", servers: buildServerMap(proxyUrl, servers) };
     } finally {
         clearTimeout(timer);
+        deadlineController.abort();
         sharedSignals.dispose();
     }
 }

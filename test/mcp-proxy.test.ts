@@ -3,11 +3,12 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { test } from "node:test";
 
-import { discoverMCPServersDetailed } from "../src/mcp-proxy.js";
+import { discoverMCPServersDetailed, isMCPProxyAvailable } from "../src/mcp-proxy.js";
 
 /**
  * A minimal MCP proxy stand-in. `health` and `list` each control how the
@@ -35,8 +36,47 @@ async function startProxy(handlers: {
     const { port } = server.address() as AddressInfo;
     return {
         url: `http://127.0.0.1:${port}`,
-        close: () => new Promise((resolve) => server.close(() => resolve())),
+        close: () => new Promise<void>((resolve, reject) => {
+            server.close((error) => error ? reject(error) : resolve());
+            server.closeAllConnections();
+        }),
     };
+}
+
+for (const [method, phase, status] of [
+    ["availability", "health", 200],
+    ["availability", "health", 503],
+    ["discovery", "health", 200],
+    ["discovery", "health", 503],
+    ["discovery", "list", 503],
+] as const) {
+    test(`${method} closes the unread ${phase} HTTP ${status} body`, async () => {
+        let socket: Socket | undefined;
+        const stall = (res: http.ServerResponse): void => {
+            socket = res.socket ?? undefined;
+            res.writeHead(status);
+            res.write("incomplete");
+        };
+        const proxy = await startProxy({
+            health: phase === "health" ? stall : (res) => res.end(),
+            list: phase === "list" ? stall : (res) => res.end(JSON.stringify({ servers: [] })),
+        });
+        try {
+            if (method === "availability") {
+                assert.equal(await isMCPProxyAvailable(proxy.url), status === 200);
+            } else {
+                const outcome = await discoverMCPServersDetailed(proxy.url);
+                assert.equal(outcome.status, status === 200 ? "ok" : phase === "health" ? "unavailable" : "invalid-response");
+            }
+            assert.ok(socket);
+            if (!socket.destroyed) {
+                await once(socket, "close", { signal: AbortSignal.timeout(1000) });
+            }
+            assert.equal(socket.destroyed, true);
+        } finally {
+            await proxy.close();
+        }
+    });
 }
 
 test("healthy proxy with one server returns ok with that server", async () => {
